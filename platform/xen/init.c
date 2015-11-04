@@ -35,6 +35,8 @@
 #include <bmk-core/platform.h>
 #include <bmk-core/printf.h>
 
+#include <rumprun-base/rumprun.h>
+
 static char *
 get_xenstorecfg(void)
 {
@@ -49,6 +51,41 @@ get_xenstorecfg(void)
 	xenbus_transaction_end(txn, 0, &retry);
 
 	return cfg;
+}
+
+static void
+jitsu_write_booted(void)
+{
+	xenbus_transaction_t txn;
+	int retry;
+	char *err;
+	char buf[16];
+	bmk_time_t boot_time;
+
+	if (xenbus_transaction_start(&txn)) {
+		bmk_printf("%s: xenbus_transaction_start() failed\n",
+				__func__);
+		return;
+	}
+
+	boot_time = bmk_platform_cpu_clock_monotonic();
+	boot_time += bmk_platform_cpu_clock_epochoffset();
+	bmk_snprintf(buf, sizeof buf, "%ld", boot_time);
+	err = xenbus_write(txn, "data/boot_time", buf);
+	if (err != NULL) {
+		bmk_printf("%s: xenbus_write() failed: %s\n", __func__, err);
+		xenbus_transaction_end(txn, 0, &retry);
+		return;
+	}
+
+	err = xenbus_write(txn, "data/status", "ready");
+	if (err != NULL) {
+		bmk_printf("%s: xenbus_write() failed: %s\n", __func__, err);
+		xenbus_transaction_end(txn, 0, &retry);
+		return;
+	}
+
+	xenbus_transaction_end(txn, 0, &retry);
 }
 
 int
@@ -67,6 +104,10 @@ app_main(start_info_t *si)
 
 	if ((cmdline = get_xenstorecfg()) == NULL)
 		cmdline = (char *)si->cmd_line;
+
+	rumprun_boot(cmdline);
+
+	jitsu_write_booted();
 
 	bmk_mainthread(cmdline);
 	/* NOTREACHED */
