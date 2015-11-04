@@ -62,14 +62,15 @@ jitsu_write_booted(void)
 	char buf[16];
 	bmk_time_t boot_time;
 
+	boot_time = bmk_platform_cpu_clock_monotonic();
+	boot_time += bmk_platform_cpu_clock_epochoffset();
+
 	if (xenbus_transaction_start(&txn)) {
 		bmk_printf("%s: xenbus_transaction_start() failed\n",
 				__func__);
 		return;
 	}
 
-	boot_time = bmk_platform_cpu_clock_monotonic();
-	boot_time += bmk_platform_cpu_clock_epochoffset();
 	bmk_snprintf(buf, sizeof buf, "%ld", boot_time);
 	err = xenbus_write(txn, "data/boot_time", buf);
 	if (err != NULL) {
@@ -77,6 +78,47 @@ jitsu_write_booted(void)
 		xenbus_transaction_end(txn, 0, &retry);
 		return;
 	}
+
+	err = xenbus_write(txn, "data/status", "ready");
+	if (err != NULL) {
+		bmk_printf("%s: xenbus_write() failed: %s\n", __func__, err);
+		xenbus_transaction_end(txn, 0, &retry);
+		return;
+	}
+
+	xenbus_transaction_end(txn, 0, &retry);
+}
+
+static void
+jitsu_get_start_time(void)
+{
+	xenbus_transaction_t txn;
+	int retry;
+	char *err, *vm_path, *start_time, start_time_path[128];
+
+	if (xenbus_transaction_start(&txn)) {
+		bmk_printf("%s: xenbus_transaction_start() failed\n",
+				__func__);
+		return;
+	}
+
+	err = xenbus_read(txn, "vm", &vm_path);
+	if (err != NULL) {
+		bmk_printf("%s: xenbus_read() failed: %s\n", __func__, err);
+		xenbus_transaction_end(txn, 0, &retry);
+		return;
+	}
+
+	bmk_snprintf(start_time_path, sizeof start_time_path, "%s/start_time",
+		vm_path);
+	err = xenbus_read(txn, start_time_path, &start_time);
+	if (err != NULL) {
+		bmk_printf("%s: xenbus_read(%s) failed: %s\n", __func__,
+			start_time_path, err);
+		xenbus_transaction_end(txn, 0, &retry);
+		return;
+	}
+	bmk_printf("%s: start_time is: %s\n", __func__, start_time);
 
 	err = xenbus_write(txn, "data/status", "ready");
 	if (err != NULL) {
@@ -108,6 +150,7 @@ app_main(start_info_t *si)
 	rumprun_boot(cmdline);
 
 	jitsu_write_booted();
+	jitsu_get_start_time();
 
 	bmk_mainthread(cmdline);
 	/* NOTREACHED */
